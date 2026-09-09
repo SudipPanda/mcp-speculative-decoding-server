@@ -1,0 +1,11 @@
+# Pin the mcp SDK — its FastMCP tool registration API has changed across
+# releases. This project targets 1.6.x; if you bump it, re-check
+# server.py against the SDK's own README/examples before assuming a
+# breakage is a bug in this project.
+mcp>=1.6.0,<2.0.0
+
+torch>=2.2.0
+transformers>=4.44.0
+accelerate>=0.33.0
+matplotlib>=3.8.0
+pydantic>=2.6.0
