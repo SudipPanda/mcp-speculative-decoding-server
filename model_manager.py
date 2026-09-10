@@ -142,6 +142,62 @@ class ModelManager:
         rejected = n_generated - accepted
 
         return pass
+    
+    @torch.no_grad()
+    def get_attention_patter(self , prompt: str , layer: int , head: str | int = "all" ):
+        inputs = self.target_tokenizer(prompt , return_tensor = 'pt').to(self.device)
+        out = self.target_model(**inputs ,output_attentions =  True)
+
+        attentions = out.attentions #tuple (batch , n_head , seq , seq ) here 
+        n_layers = len(attentions)
+
+        if not(0<=layer<n_layers):
+            raise ValueError("The layer number is not valid here")
+        
+        layer_attn = attentions[layer][0] # the dimension here is [n_heads, seq, seq]
+        n_heads = layer_attn.shape[0]
+
+        if head == "all":
+            natrix = layer_attn.mean(dim =0)
+            head_label = " avg_of_all_the_head_here"
+        else:
+            head_int = int(head)
+            if not (0<=head_int< n_heads):
+                raise ValueError("the head number is not valid here")
+            
+            matrix = layer_attn[head_int]
+            head_label = f"head_no - {head_int}"
+        
+        tokens = self.target_tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+        matrix_np = matrix.detach().cpu().float().numpy()
+
+
+        fig, ax = plt.subplots(figsize=(6, 5))
+        im = ax.imshow(matrix_np, cmap="viridis")
+        ax.set_xticks(range(len(tokens)))
+        ax.set_yticks(range(len(tokens)))
+        ax.set_xticklabels(tokens, rotation=90, fontsize=6)
+        ax.set_yticklabels(tokens, fontsize=6)
+        ax.set_title(f"Layer {layer} / {head_label}")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=120)
+        plt.close(fig)
+        buf.seek(0)
+        png = base64.b64encode(buf.read()).decode("utf-8")
+
+        return png, matrix_np.tolist(), tokens
+
+
+
+
+ 
+
+
+
+
         
     
 
