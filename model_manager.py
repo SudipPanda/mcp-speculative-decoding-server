@@ -38,6 +38,12 @@ class GenerationResult:
 class CompareResult:
     pass
 
+@dataclass
+class SpecRoundLog:
+    round_index : int
+    proposed_token : list[str]
+    accepted_mask : list[bool]
+
 
 class ModelManager:
     _instance : Optional["ModelManager"] = None
@@ -122,8 +128,21 @@ class ModelManager:
         )
     
     @torch.no_grad()
-    def compare_draft_vs_target():
-        pass
+    def compare_draft_vs_target (self , 
+        prompt:str , 
+        k: int = 4 ,
+        max_new_token : int  = 40 , 
+        temp: float  = 0.7) -> CompareResult:
+
+        text, _rounds, forward_passes, elapsed, n_generated = self._speculative_loop(
+            prompt, max_new_tokens, k, temp 
+            )
+        accepted = sum(r.run_length for r in rounds)
+        run_lengths = [r.run_length for r in rounds]
+        rejected = n_generated - accepted
+
+        return pass
+        
     
 
     def _speculative_loop(
@@ -131,23 +150,133 @@ class ModelManager:
         prompt : str , 
         max_mew_tokens : int , 
         k : int ,
-        temp : float , );
+        temp : float , 
+        collect_logs: bool = False
+        ):
+
+        #k : How many tokens the draft model proposes
+        #per speculative round
+
+        #max_new_tokens : How many tokens the FINAL output can contain overall
+        #n_generated : how many token the model will generate here
 
         temp = max(temp , 1e-5)
 
         inputs = self.target_tokenizer(prompt , return_tensors="pt").to(self.device)
         input_ids = inputs["input_ids"]
-
+        
+        """ What is the length of the prompt here"""
         prompt_len = input_ids.shape[1]
+        rounds : list[SpecRoundLog] = []
+
         generated = input_ids.clone()
 
         forward_pass = 0
         n_generated = 0
 
-        while n_generated > max_new_tokens:
-            this_k = min(k , max_new_tokens-n_generated)
+        t0 = time.time()
 
-            pass
+        while n_generated < max_new_tokens:
+
+            this_k = min(k , max_new_tokens-n_generated)
+            cur = generated
+
+            proposed_token_probab = []
+            proposed_token = []
+
+            """ Generate the no of token for a draft model that is no od this_k here"""
+            for _ in range(this_k):
+                draft_out = self.draft_model(cur)
+                logits = draft_out.logits[: , -1 , :]
+                probs = F.softmax(logits , dim=-1)
+
+                """ sampling here based on the probability here"""
+                token = torch.multinomial(probs , num_samples =1)
+
+                proposed_token_probab .append(probs[0])
+
+                proposed_token.append(token)
+                cur = torch.cat([cur , token] , dim = 1)
+            
+            """ feeding the output into the target model here"""
+            target_out = self.target_model(cur)
+            forward_pass += 1
+
+
+            base = generated.shape[1]-1
+            target_logits = target_out.logits[0, base : base + this_k + 1, :] / temp
+            target_probs = F.softmax(target_logits, dim=-1)
+            
+
+            accepted_mask = []
+            p_values = []
+            q_values = []
+            proposed_strs = []
+            run_length = 0
+            bonus_token_str = None
+            all_accepted = True
+
+            for i in range(this_k):
+                x_i = proposed_token[i]
+                p_i = target_probs[i]
+
+                q_i = proposed_token_probab [i]
+
+                p_x = p_i[x_i.item()].item()
+                q_x = q_i[x_i.item()].item()
+                accept_prob = min(1.0, p_x / q_x) if q_x > 0 else 0.0
+
+                if collect_logs:
+                    proposed_strs.append(self.target_tokenizer.decode(x_i[0]))
+                    p_values.append(p_x)
+                    q_values.append(q_x)
+                
+
+                if torch.rand(1).item() < accept_prob:
+                    generated = torch.cat([generated, x_i], dim=1)
+                    n_generated += 1
+                    run_length += 1
+                    accepted_mask.append(True)
+                    if n_generated >= max_new_tokens:
+                        all_accepted = False  # stop, no bonus token needed
+                        break
+
+                else:
+                    accepted_mask.append(False)
+                    adjusted = torch.clamp(p_i - q_i, min=0.0)
+                    denom = adjusted.sum()
+                    if denom > 0:
+                        adjusted = adjusted / denom
+                        x_new = torch.multinomial(adjusted, num_samples=1).unsqueeze(0)
+                    else:
+                        x_new = torch.multinomial(p_i, num_samples=1).unsqueeze(0)
+
+                    generated = torch.cat([generated, x_new], dim=1)
+                    n_generated += 1
+                    all_accepted = False
+                    break
+            
+            if all_accepted and n_generated < max_new_tokens:
+                bonus_prob = target_probs[this_k]
+                bonus_token = torch.multinomial(bonus_probs, num_samples=1).unsqueeze(0)
+                generated = torch.cat([generated , bonus_token] , dim = 1)
+                n_generated += 1
+                un_length += 1
+
+                if collect_logs:
+                    bonus_token_str = self.target_tokenizer.decode(bonus_token[0])
+            
+
+            if collect_logs:
+                pass
+        
+        
+        elasped = time.time()-t0
+        text = self.target_tokenizer.decode(
+            generated[0][prompt_len:], skip_special_tokens=True
+        )
+
+        return text, rounds, forward_passes, elapsed, n_generated
 
 
 
