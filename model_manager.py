@@ -33,7 +33,7 @@ class GenerationResult:
     text: str
     token_generated: int
     total_time: float
-    new_token: list[int]
+    output: torch.Tensor
 
 
 @dataclass
@@ -93,7 +93,7 @@ class ModelManager:
 
         print("both the model has been downloaded")
 
-
+    """Generate a plain answer here """
     @torch.no_grad()
     def generate_plain(
         self , 
@@ -124,32 +124,28 @@ class ModelManager:
         elapse = time.time()-t0
         new_token = out[0][inputs["input_ids"].shape[1]:]
         text = self.target_tokenizer.decode(new_token, skip_special_tokens=True)
-        print("the output of the token is", text)
-        print("the new token here is", new_token)
+        output_text = self.target_tokenizer.decode(out , skip_special_tokens = True)
 
         return GenerationResult(
             text = text , 
             token_generated = new_token.shape[0] ,
             total_time = elapse , 
-            new_token = new_token.tolist()
+            output = output_text
         )
-    
+    ##################################################################################
     @torch.no_grad()
     def geenrate_speculative(
         self , prompt: str , max_new_tokens: int = 100 , 
-        k: int = 4 , temp: float = 0.7 ) -> GenerationResult:
+        k: int = 4 , temp: float = 0.7 ):
 
         text, _rounds, forward_passes, elapsed, n_generated = self._speculative_loop(
             prompt, max_new_tokens, k, temp
         )
 
-        return GenerationResult(
-            text = text ,
-            token_generated = n_generated , 
-            total_time = elapsed
-
-
-        )
+        """NEED TO MIDIFY HERE"""
+        return [text, _rounds, forward_passes, elapsed, n_generated]
+    
+    ###################################################################################
     
     @torch.no_grad()
     def compare_draft_vs_target (self , 
@@ -164,7 +160,7 @@ class ModelManager:
         run_lengths = [r.run_length for r in rounds]
         accepted = sum(run_lengths)
         rejected = n_generated - accepted
-
+ 
         return CompareResult(
             text=text,
             rounds=len(rounds),
@@ -177,32 +173,44 @@ class ModelManager:
         )
 
     
+    """ get the attention pattern here"""
     @torch.no_grad()
     def get_attention_patter(self , prompt: str , layer: int , head: str | int = "all" ):
-        inputs = self.target_tokenizer(prompt , return_tensor = 'pt').to(self.device)
-        out = self.target_model(**inputs ,output_attentions =  True)
+        inputs = self.target_tokenizer(
+            prompt,
+            return_tensors="pt",
+        ).to(self.device)
 
-        attentions = out.attentions #tuple (batch , n_head , seq , seq ) here 
+        # SDPA cannot return attention weights; eager attention is required here.
+        self.target_model.set_attn_implementation("eager")
+        out = self.target_model(**inputs, output_attentions=True)
+
+        attentions = out.attentions #tuple (batch , n_head , seq , seq ) here
+
+        if not attentions:
+            print(" the function doesnot return any atttention output here") 
+
         n_layers = len(attentions)
 
         if not(0<=layer<n_layers):
-            raise ValueError("The layer number is not valid here")
+            raise ValueError(f"The layer number is not valid here and the number of the layer is {n_layers}")
         
         layer_attn = attentions[layer][0] # the dimension here is [n_heads, seq, seq]
         n_heads = layer_attn.shape[0]
 
         if head == "all":
-            natrix = layer_attn.mean(dim =0)
-            head_label = " avg_of_all_the_head_here"
+            matrix = layer_attn.mean(dim=0)
+            head_label = "avg_of_all_heads"
         else:
             head_int = int(head)
             if not (0<=head_int< n_heads):
-                raise ValueError("the head number is not valid here")
+                raise ValueError(f"the head number is not valid here and the number of heads are {n_heads}")
             
             matrix = layer_attn[head_int]
             head_label = f"head_no - {head_int}"
         
         tokens = self.target_tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+
         matrix_np = matrix.detach().cpu().float().numpy()
 
 
@@ -227,7 +235,7 @@ class ModelManager:
     def _speculative_loop(
         self ,
         prompt : str , 
-        max_mew_tokens : int , 
+        max_new_tokens : int , 
         k : int ,
         temp : float , 
         collect_logs: bool = False
@@ -337,10 +345,10 @@ class ModelManager:
             
             if all_accepted and n_generated < max_new_tokens:
                 bonus_prob = target_probs[this_k]
-                bonus_token = torch.multinomial(bonus_probs, num_samples=1).unsqueeze(0)
+                bonus_token = torch.multinomial(bonus_prob, num_samples=1).unsqueeze(0)
                 generated = torch.cat([generated , bonus_token] , dim = 1)
                 n_generated += 1
-                un_length += 1
+                run_length += 1
 
                 if collect_logs:
                     bonus_token_str = self.target_tokenizer.decode(bonus_token[0])
@@ -355,14 +363,12 @@ class ModelManager:
             generated[0][prompt_len:], skip_special_tokens=True
         )
 
-        return text, rounds, forward_passes, elapsed, n_generated
+        return text, rounds, forward_pass, elasped, n_generated
 
 def main():
     manager = ModelManager()
-    ans = manager.generate_plain( prompt = "what is the capital of japan?")
-    print(ans.total_time)
-    print(ans.text)
-    print(ans.new_token)
+    ans = manager.geenrate_speculative( prompt = "what is the capital of japan?")
+    print("the answer here is " , ans)
 
 if __name__ == "__main__":
     main()
