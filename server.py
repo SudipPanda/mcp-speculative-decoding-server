@@ -45,7 +45,7 @@ def get_attention_pattern(prompt : str , layer : int , head: str = 'all'):
         return [ToolError(error="invalid_input", detail=str(e)).model_dump_json()]
     
     try:
-        output = run_attention(manager: ModelManager , args: args)
+        output = run_attention(manager = ModelManager , args = args)
     except ValueError as e:
         # Expected, structured failure mode: bad layer/head index.
         return [ToolError(error="invalid_layer_or_head", detail=str(e)).model_dump_json()]
