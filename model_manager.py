@@ -4,9 +4,10 @@ This Basically hold the draft/traget model pair in memeory here
 
 import base64
 import io
-import logger
+import logging
 import time 
 import matplotlib
+from dataclasses import dataclass, field
 
 matplotlib.use("Agg")
 
@@ -32,11 +33,19 @@ class GenerationResult:
     text: str
     token_generated: int
     total_time: float
+    new_token: list[int]
 
 
 @dataclass
 class CompareResult:
-    pass
+    text: str
+    rounds: int
+    forward_passes: int
+    total_time: float
+    token_generated: int
+    accepted: int
+    rejected: int
+    run_lengths: list[int]
 
 @dataclass
 class SpecRoundLog:
@@ -50,9 +59,9 @@ class ModelManager:
 
     def __init__(
         self , 
-        draft_model: str = "Qwen/Qwen2.5-0.5B-Instruct, 
-        target_model: str = "Qwen/Qwen2.5-1.5B-Instruct",
-        device: Optional[str] = None ):
+        draft_model: str = 'HuggingFaceTB/SmolLM2-135M-Instruct',
+        target_model: str = 'HuggingFaceTB/SmolLM2-360M-Instruct',
+        device: Optional[str] = None , ):
 
         self.device = device or _pick_device()
         
@@ -82,6 +91,8 @@ class ModelManager:
         self._load = True
         self._load_model = time.time()-t0
 
+        print("both the model has been downloaded")
+
 
     @torch.no_grad()
     def generate_plain(
@@ -90,30 +101,42 @@ class ModelManager:
         max_new_token: int = 100 , 
         temp : float = 0.7 )-> GenerationResult:
 
-        inputs = self.target_tokenizer(prompt ,return_tensors="pt").to(self.device)
+        if getattr(self.target_tokenizer, "chat_template", None):
+            formatted_prompt = self.target_tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        else:
+            formatted_prompt = prompt
+
+        inputs = self.target_tokenizer(formatted_prompt, return_tensors="pt").to(self.device)
 
         t0 = time.time()
         out = self.target_model.generate(
             **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=temperature > 0,
-            temperature=max(temperature, 1e-5),
+            max_new_tokens=max_new_token,
+            do_sample=temp > 0,
+            temperature=temp if temp > 0 else 1.0,
             pad_token_id=self.target_tokenizer.eos_token_id,
         )
 
         elapse = time.time()-t0
         new_token = out[0][inputs["input_ids"].shape[1]:]
-        text = self.target_tokenizer.decode(new_tokens, skip_special_tokens=True)
+        text = self.target_tokenizer.decode(new_token, skip_special_tokens=True)
+        print("the output of the token is", text)
+        print("the new token here is", new_token)
 
         return GenerationResult(
             text = text , 
             token_generated = new_token.shape[0] ,
-            total_time = elapse
+            total_time = elapse , 
+            new_token = new_token.tolist()
         )
     
     @torch.no_grad()
     def geenrate_speculative(
-        self , prompt: str , max_new_toke: int = 100 , 
+        self , prompt: str , max_new_tokens: int = 100 , 
         k: int = 4 , temp: float = 0.7 ) -> GenerationResult:
 
         text, _rounds, forward_passes, elapsed, n_generated = self._speculative_loop(
@@ -125,6 +148,7 @@ class ModelManager:
             token_generated = n_generated , 
             total_time = elapsed
 
+
         )
     
     @torch.no_grad()
@@ -134,14 +158,24 @@ class ModelManager:
         max_new_token : int  = 40 , 
         temp: float  = 0.7) -> CompareResult:
 
-        text, _rounds, forward_passes, elapsed, n_generated = self._speculative_loop(
-            prompt, max_new_tokens, k, temp 
+        text, rounds, forward_passes, elapsed, n_generated = self._speculative_loop(
+            prompt, max_new_token, k, temp
             )
-        accepted = sum(r.run_length for r in rounds)
         run_lengths = [r.run_length for r in rounds]
+        accepted = sum(run_lengths)
         rejected = n_generated - accepted
 
-        return pass
+        return CompareResult(
+            text=text,
+            rounds=len(rounds),
+            forward_passes=forward_passes,
+            total_time=elapsed,
+            token_generated=n_generated,
+            accepted=accepted,
+            rejected=rejected,
+            run_lengths=run_lengths,
+        )
+
     
     @torch.no_grad()
     def get_attention_patter(self , prompt: str , layer: int , head: str | int = "all" ):
@@ -189,17 +223,6 @@ class ModelManager:
         png = base64.b64encode(buf.read()).decode("utf-8")
 
         return png, matrix_np.tolist(), tokens
-
-
-
-
- 
-
-
-
-
-        
-    
 
     def _speculative_loop(
         self ,
@@ -333,6 +356,17 @@ class ModelManager:
         )
 
         return text, rounds, forward_passes, elapsed, n_generated
+
+def main():
+    manager = ModelManager()
+    ans = manager.generate_plain( prompt = "what is the capital of japan?")
+    print(ans.total_time)
+    print(ans.text)
+    print(ans.new_token)
+
+if __name__ == "__main__":
+    main()
+
 
 
 

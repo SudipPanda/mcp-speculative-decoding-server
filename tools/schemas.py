@@ -1,5 +1,5 @@
 from typing import Optional 
-from pydentic import BaseModel , Field
+from pydantic import BaseModel, Field
 
 #------------------------------------------
 #Generated value here
@@ -28,10 +28,10 @@ class AttentionInput(BaseModel):
     head: str = Field(default="all", description="Head index as a string, or 'all' to average")
 
 class AttentionOutput(BaseModel):
-    png_img : str , 
-    attention_weights : list[list[float]]
-    tokens = list[str]
-    layer : int 
-    head : str
-    given_prompt : str
+    png_img: str
+    attention_weights: list[list[float]]
+    tokens: list[str]
+    layer: int
+    head: str
+    given_prompt: str
   

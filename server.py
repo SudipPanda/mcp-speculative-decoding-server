@@ -19,8 +19,8 @@ logger = logging.getLogger("mcp_server")
 mcp = FastMCP("local-model_inference")
 
 manager = ModelManager(
-    draft_model_name="Qwen/Qwen2.5-0.5B-Instruct",
-    target_model_name="Qwen/Qwen2.5-1.5B-Instruct",
+    draft_model="Qwen/Qwen2.5-0.5B-Instruct",
+    target_model="Qwen/Qwen2.5-1.5B-Instruct",
     device = "cpu"
 )
 
@@ -32,7 +32,14 @@ def generate(
     k : int = 4 , 
     temp : float = 0.7,):
 
-    pass
+    args = GeneratedInput(
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+        use_speculative=use_speculative,
+        k=k,
+        temperature=temp,
+    )
+    return run_generate(manager, args)
 
 
 
@@ -54,6 +61,10 @@ def get_attention_pattern(prompt : str , layer : int , head: str = 'all'):
         return [ToolError(error="attention_extraction_failed", detail=str(e)).model_dump_json()]
 
  
+def main()-> None:
+    mcp.run()
 
+if __name__ == "__main__":
+    mian()
 
 

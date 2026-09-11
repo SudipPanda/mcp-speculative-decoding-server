@@ -4,7 +4,8 @@ from tools.schemas import AttentionInput , AttentionOutput
 
 def run_attention(manager: ModelManager , args: AttentionInput) -> AttentionOutput:
     png_img  , matrics , tokens = ModelManager.get_attention_patter(
-        prompt = args.prompt , layer =  args.layer , head = args.head
+        prompt = args.prompt , layer =  args.layer , head = 
+        args.head
     )
 
     return AttentionOutput(
