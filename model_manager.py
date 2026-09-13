@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 This Basically hold the draft/traget model pair in memeory here
 """
@@ -38,20 +40,23 @@ class GenerationResult:
 
 @dataclass
 class CompareResult:
-    text: str
-    rounds: int
-    forward_passes: int
-    total_time: float
-    token_generated: int
-    accepted: int
-    rejected: int
-    run_lengths: list[int]
+    generated_text: str
+    total_tokens: int
+    accepted_tokens: int
+    rejected_tokens: int
+    acceptance_rate: float
+    run_length_distribution: list[int]
+    rounds: list[SpecRoundLog]
+    target_forward_passes: int
+
 
 @dataclass
 class SpecRoundLog:
     round_index : int
     proposed_token : list[str]
     accepted_mask : list[bool]
+    p_values : list[float]
+    q_values : list[float]
 
 
 class ModelManager:
@@ -146,31 +151,33 @@ class ModelManager:
         return [text, _rounds, forward_passes, elapsed, n_generated]
     
     ###################################################################################
-    
-    @torch.no_grad()
-    def compare_draft_vs_target (self , 
-        prompt:str , 
-        k: int = 4 ,
-        max_new_token : int  = 40 , 
-        temp: float  = 0.7) -> CompareResult:
 
+    @torch.no_grad()
+    def compare_draft_vs_target(
+        self,
+        prompt: str,
+        k: int = 4,
+        max_new_token: int = 40,
+        temp: float = 0.7,
+    ) -> CompareResult:
         text, rounds, forward_passes, elapsed, n_generated = self._speculative_loop(
             prompt, max_new_token, k, temp
-            )
+        )
         run_lengths = [r.run_length for r in rounds]
         accepted = sum(run_lengths)
         rejected = n_generated - accepted
- 
+        
         return CompareResult(
-            text=text,
-            rounds=len(rounds),
-            forward_passes=forward_passes,
-            total_time=elapsed,
-            token_generated=n_generated,
-            accepted=accepted,
-            rejected=rejected,
-            run_lengths=run_lengths,
+            generated_text=text,
+            total_tokens=n_generated,
+            accepted_tokens=accepted,
+            rejected_tokens=rejected,
+            acceptance_rate=accepted / n_generated if n_generated else 0.0,
+            run_length_distribution=run_lengths,
+            rounds=rounds,
+            target_forward_passes=forward_passes,
         )
+
 
     
     """ get the attention pattern here"""
@@ -264,8 +271,7 @@ class ModelManager:
         t0 = time.time()
 
         while n_generated < max_new_tokens:
-
-            this_k = min(k , max_new_tokens-n_generated)
+            this_k = min(k, max_new_tokens - n_generated)
             cur = generated
 
             proposed_token_probab = []
@@ -274,8 +280,8 @@ class ModelManager:
             """ Generate the no of token for a draft model that is no od this_k here"""
             for _ in range(this_k):
                 draft_out = self.draft_model(cur)
-                logits = draft_out.logits[: , -1 , :]
-                probs = F.softmax(logits , dim=-1)
+                logits = draft_out.logits[:, -1, :]
+                probs = F.softmax(logits, dim=-1)
 
                 """ sampling here based on the probability here"""
                 token = torch.multinomial(probs , num_samples =1)
@@ -343,6 +349,13 @@ class ModelManager:
                     all_accepted = False
                     break
             
+
+            # print("the p_value here is " , p_values)
+            # print("the q_value here is " , q_values)
+            # print("the acceptance mask here is " , accepted_mask)
+            # print("the proposed token here is " , proposed_strs)
+
+
             if all_accepted and n_generated < max_new_tokens:
                 bonus_prob = target_probs[this_k]
                 bonus_token = torch.multinomial(bonus_prob, num_samples=1).unsqueeze(0)
@@ -355,7 +368,15 @@ class ModelManager:
             
 
             if collect_logs:
-                pass
+                rounds.append(
+                    SpecRoundLog(
+                        round_index = 1,
+                        proposed_token = proposed_strs,
+                        accepted_mask = accepted_mask,
+                        p_values = p_values , 
+                        q_values = q_values
+                    )
+                )
         
         
         elasped = time.time()-t0
@@ -367,7 +388,11 @@ class ModelManager:
 
 def main():
     manager = ModelManager()
-    ans = manager.geenrate_speculative( prompt = "what is the capital of japan?")
+    ans = manager._speculative_loop( prompt = "what is the capital of japan?" , max_new_tokens = 30 , 
+        k = 4 ,
+        temp = 0.4 , 
+        collect_logs = True)
+
     print("the answer here is " , ans)
 
 if __name__ == "__main__":
