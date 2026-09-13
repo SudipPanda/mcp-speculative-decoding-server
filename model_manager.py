@@ -57,6 +57,7 @@ class SpecRoundLog:
     accepted_mask : list[bool]
     p_values : list[float]
     q_values : list[float]
+    run_length : int
 
 
 class ModelManager:
@@ -159,6 +160,7 @@ class ModelManager:
         k: int = 4,
         max_new_token: int = 40,
         temp: float = 0.7,
+
     ) -> CompareResult:
         text, rounds, forward_passes, elapsed, n_generated = self._speculative_loop(
             prompt, max_new_token, k, temp
@@ -166,6 +168,8 @@ class ModelManager:
         run_lengths = [r.run_length for r in rounds]
         accepted = sum(run_lengths)
         rejected = n_generated - accepted
+
+        print("##############the rounds here is " , rounds)
         
         return CompareResult(
             generated_text=text,
@@ -245,7 +249,7 @@ class ModelManager:
         max_new_tokens : int , 
         k : int ,
         temp : float , 
-        collect_logs: bool = False
+        collect_logs: bool = True
         ):
 
         #k : How many tokens the draft model proposes
@@ -374,10 +378,11 @@ class ModelManager:
                         proposed_token = proposed_strs,
                         accepted_mask = accepted_mask,
                         p_values = p_values , 
-                        q_values = q_values
+                        q_values = q_values ,
+                        run_length = run_length,
                     )
                 )
-        
+                
         
         elasped = time.time()-t0
         text = self.target_tokenizer.decode(
@@ -388,20 +393,9 @@ class ModelManager:
 
 def main():
     manager = ModelManager()
-    ans = manager._speculative_loop( prompt = "what is the capital of japan?" , max_new_tokens = 30 , 
-        k = 4 ,
-        temp = 0.4 , 
-        collect_logs = True)
+    ans = manager.compare_draft_vs_target( prompt = "what is the capital of japan?" )
 
     print("the answer here is " , ans)
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-

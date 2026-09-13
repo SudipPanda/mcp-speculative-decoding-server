@@ -54,4 +54,11 @@ class CompareInput(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
 class CompareOutput(BaseModel):
-    pass
+    generated_text: str
+    total_tokens: int
+    accepted_tokens: int
+    rejected_tokens: int
+    acceptance_rate: float
+    run_length_distribution: list[int]
+    rounds: list[SpecRoundLog]
+    target_forward_passes: int
