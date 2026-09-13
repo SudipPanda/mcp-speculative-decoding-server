@@ -6,19 +6,22 @@ from mcp.server.fastmcp import FastMCP, Image
 from model_manager import ModelManager
 from tools.attention import run_attention
 from tools.generate import run_generate
+from tools.compare_decoder import run_compare
 
 from tools.schemas import (
     AttentionInput , 
     AttentionOutput , 
     GeneratedOutput , 
     GeneratedInput ,
+    CompareInput ,
+    CompareOutput,
 )
 
 logger = logging.getLogger("mcp_server")
 
 mcp = FastMCP("local-model_inference")
 
-manager = ModelManager(
+model_manager = ModelManager(
     draft_model="Qwen/Qwen2.5-0.5B-Instruct",
     target_model="Qwen/Qwen2.5-1.5B-Instruct",
     device = "cpu"
@@ -52,7 +55,7 @@ def get_attention_pattern(prompt : str , layer : int , head: str = 'all'):
         return [ToolError(error="invalid_input", detail=str(e)).model_dump_json()]
     
     try:
-        output = run_attention(manager = ModelManager , args = args)
+        output = run_attention(manager = model_manager , args = args)
     except ValueError as e:
         # Expected, structured failure mode: bad layer/head index.
         return [ToolError(error="invalid_layer_or_head", detail=str(e)).model_dump_json()]
@@ -60,7 +63,22 @@ def get_attention_pattern(prompt : str , layer : int , head: str = 'all'):
         logger.exception("get_attention_pattern failed")
         return [ToolError(error="attention_extraction_failed", detail=str(e)).model_dump_json()]
 
- 
+@mcp.tool()
+def comparer_decoder(prompt:str , k:int , max_new_token:int , temp:float):
+    try:
+        args = CompareInput(prompt = prompt , k =k , max_new_tokens = max_new_token , temperature = temp)
+    except Exception as e:
+        return [ToolError(error="invalid_input", detail=str(e)).model_dump_json()]
+    try:
+        output = run_compare(manager = model_manager , args = args)
+     except ValueError as e:
+        # Expected, structured failure mode: bad layer/head index.
+        return [ToolError(error="SOmething wrong in Input here", detail=str(e)).model_dump_json()]
+
+    except Exception as e:
+        return [ToolError(error="something wrong here", detail=str(e)).model_dump_json()]
+
+
 def main()-> None:
     mcp.run()
 
